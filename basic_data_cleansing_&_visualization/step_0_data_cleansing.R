@@ -15,7 +15,7 @@ Created on 2022/02/11 14:23:57
 
 # 载入Excel表格(注意指定编码格式)
 library(xlsx)
-dat <- read.xlsx("data/neural_vte_data.xlsx", sheetName = "Sheet1", encoding = "UTF-8")
+dat <- read.xlsx("basic_data_cleansing_&_visualization/data/neural_vte_data.xlsx", sheetName = "Sheet1", encoding = "UTF-8")
 
 # 查看数据框中每列数据类型(字符character, 数值numerical等).
 dtypes <- sapply(dat, class)

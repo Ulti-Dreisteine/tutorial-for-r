@@ -67,13 +67,41 @@ draw_box_compar <- function(dat, x_col, y_col) {  # 连续变量X和分类变量
 
 # 测试函数
 x_col <- cols[1]  # 是分类变量
-draw_percent_bar_compar(dat, x_col, y_col)
+p <- draw_percent_bar_compar(dat, x_col, y_col)
 
 x_col <- cols[length(cols)]  # 是连续变量
-draw_box_compar(dat, x_col, y_col)
+p <- draw_box_compar(dat, x_col, y_col)
 
 # ---- 多个变量与结局变量之间的分布关系对比图 ---------------------------------------------------------
-# TODO
+
+library(patchwork)  # 拼图 
+
+cols <- names(dat)
+
+for (col in cols) {
+    if (col %in% categoric_cols) {
+        p <- draw_percent_bar_compar(dat, col, y_col)
+    }
+    else {
+        p <- draw_box_compar(dat, col, y_col)
+    }
+
+    nrow <- 12
+    ncol <- 5
+    if (col == cols[1]) {
+        graph <- p + plot_layout(nrow = nrow, ncol = ncol, tag_level = "new") +
+        # plot_annotation(tag_levels = "a") +  # 子图不再加标记, 因为有title了
+        theme(plot.tag = element_text(size = rel(1)))
+    }
+    else {
+        graph <- graph + p + plot_layout(nrow = nrow, ncol = ncol, tag_level = "new") + 
+        # plot_annotation(tag_levels = "a") + 
+        theme(plot.tag = element_text(size = rel(1)))
+    }
+}
+
+# 保存图片
+ggsave(graph, filename = "img/tmp.png", width = 10, height = 24, dpi = 300)
 
 
 
