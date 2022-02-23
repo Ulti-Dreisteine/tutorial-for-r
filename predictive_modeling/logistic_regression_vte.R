@@ -25,15 +25,16 @@ sapply(dat, class)
 
 # ---- 构建模型 -------------------------------------------------------------------------------------
 
-attach(dat)
-ddist <- datadist(dat)
-options(datadist="ddist")
 
 f <- lrm(
     ICU ~ sex + injury + age + BMI + thrombus,
     data = dat
     )
 
+# 画nomogram图时需要提前了解数据字段值分布范围
+attach(dat)
+ddist <- datadist(dat)
+options(datadist="ddist")
 
 nomo_graph <- nomogram(f, fun = plogis, fun.at = seq(0.2, 0.9, by = 0.1), funlabel = "prob. for ICU", lp = FALSE)
 

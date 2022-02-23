@@ -1,0 +1,176 @@
+---
+title: "重采样预测建模方法"
+output: html_notebook
+---
+
+在样本不平衡时使用重采样扩充正样本数，然后进行分类模型的训练和预测。
+
+首先载入相关程序包:
+
+```{r}
+library(ROSE)  # 重采样
+library(rms)  # 预测模型
+library(ROCR)  # 绘制ROC曲线, PR曲线等
+```
+
+---
+
+#### step 1: 载入示例数据:
+
+```{r}
+# 设置工作目录并导入数据
+setwd("..")
+dat <- read.csv("basic_data_cleansing_&_visualization/data/dat.csv", encoding = "UTF-8")
+
+# 取部分字段构造数据集
+dat <- dat[, c("性别", "损伤程度", "年龄", "BMI", "是否血栓", "ICU")]
+colnames(dat) <- c("sex", "injury", "age", "BMI", "thrombus", "ICU")
+
+for (col in c("sex", "injury", "thrombus", "ICU")) {
+    dat[, col] <- as.factor(dat[, col])
+}
+
+# 字段类型
+sapply(dat, class)
+
+```
+
+```{r}
+# 绘制结局指标正负样本数对比
+draw_compar <- function(dat) {
+  par(pin = c(4, 2), margin(0, 1, 1, 1))
+  barplot(table(dat$ICU), col = rainbow(2))
+}
+```
+
+```{r}
+draw_compar(dat)
+```
+
+---
+
+#### step 2: 进行重采样:
+
+```{r}
+over <- ovun.sample(
+    ICU ~ .,
+    data = dat,
+    method = "both",
+    N = 600
+)
+dat_rs <- over$data
+```
+
+```{r}
+draw_compar(dat_rs)
+```
+
+可见，经过重采样后正负样本比例相当。
+
+---
+
+#### step 3: 构建预测模型
+
+采用广义线性模型中的逻辑回归（对应于二项分布binomial）建模：
+
+```{r}
+f <- glm(ICU ~ ., data = dat, family = binomial(link = "logit"))
+f_rs <- glm(ICU ~ ., data = dat_rs, family = binomial(link = "logit"))
+```
+
+计算预测概率和标签值：
+
+```{r}
+predict_probs_and_labels <- function(f, dat) {  # 构建关系线性模型
+    y_probs_pred <- predict.glm(f, type = "response", newdata = dat)
+    y_labels_pred <- ifelse(y_probs_pred > 0.5, 1, 0)
+    return(list(y_probs_pred, y_labels_pred))
+}
+```
+
+```{r}
+# 原样本
+preds <- predict_probs_and_labels(f, dat)
+preds.probs <- preds[1]
+preds.labels <- preds[2]
+
+# 重采样样本
+preds_rs <- predict_probs_and_labels(f_rs, dat_rs)
+preds_rs.probs <- preds_rs[1]
+preds_rs.labels <- preds_rs[2]
+```
+
+模型指标和曲线绘制：
+
+```{r}
+true.labels <- dat$ICU
+true_rs.labels <- dat_rs$ICU
+```
+
+```{r}
+pred_obj <- prediction(preds.probs, true.labels)  #首先实例化一个评估器对象
+pred_obj_rs <- prediction(preds_rs.probs, true_rs.labels)
+```
+
+AUC指标计算：
+
+```{r}
+auc <- performance(pred_obj, "auc")@y.values
+auc_rs <- performance(pred_obj_rs, "auc")@y.values
+```
+
+ROC曲线绘制：
+
+```{r}
+roc <- performance(pred_obj, "tpr", "fpr")
+roc_rs <- performance(pred_obj_rs, "tpr", "fpr")
+
+plot(roc@x.values[[1]], roc@y.values[[1]], type = "l", ylim = c(0.0, 1.0), xlab = "TPR", ylab = "FPR")
+lines(roc_rs@x.values[[1]], roc_rs@y.values[[1]])
+```
+PR曲线绘制：
+
+```{r}
+pr <- performance(pred_obj, "prec", "rec")
+pr_rs <- performance(pred_obj_rs, "prec", "rec")
+
+plot(pr@x.values[[1]], pr@y.values[[1]], type = "l", ylim = c(0.0, 1.0), xlab = "R", ylab = "P")
+lines(pr_rs@x.values[[1]], pr_rs@y.values[[1]])
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
