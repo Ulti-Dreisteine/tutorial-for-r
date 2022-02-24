@@ -1,0 +1,249 @@
+## 对VTE临床数据构建预测模型
+
+### 1. 载入数据
+
+```{r}
+dat <- read.csv("data/data.csv", encoding = "UTF-8")
+
+# 查看变量数值类型
+data.frame(sapply(dat, class))
+```
+
+### 2. 数据处理
+
+指定其中的数值型变量:
+
+```{r}
+unused_cols <- c("INPATIENT_ID")
+numeric_cols <- c("AGE", "ISS", "CAPRINI_SCORE", "T", "P", "R", "MBP", "SHOCK_INDEX", "HEIGHT", "WEIGHT", "BMI", "RBC", "HGB", "PLT", "WBC", "ALB", "CRE", "UA", "AST", "ALT", "GLU", "TG", "CHO", "CA", "MG", "LDL", "NA.", "K", "CL", "GFR", "PT", "FIB", "DD", "CK", "INR")
+categoric_cols <- setdiff(names(dat), union(numeric_cols, unused_cols))
+modeling_cols <- union(numeric_cols, categoric_cols)
+
+dat <- dat[, modeling_cols]
+```
+
+将其中非数值型变量类型转为factor:
+
+```{r}
+for (col in modeling_cols) {
+  if (col %in% numeric_cols) {
+    dat[, col] <- as.numeric(dat[, col])
+  }
+  else {
+    dat[, col] <- as.factor(dat[, col])
+  }
+}
+
+# 查看变量数值类型
+data.frame(sapply(dat, class))
+```
+
+将类别变量的值全部映射为数字:
+
+```{r}
+for (col in categoric_cols) {
+  labels <- unique(dat[, col])
+  dat[, col] <- match(dat[, col], labels) - 1  # 注意这里要减1, 否则结局指标值为[1, 2]而非[0, 1]
+}
+```
+
+去掉有NA值的行:
+
+```{r}
+dat <- dat[complete.cases(dat), ]
+```
+
+### 3. 数据描述统计
+
+```{r}
+target_col <- "VTE"
+
+# 显示样本s
+table(dat[, target_col])
+```
+
+**从以上结局指标统计结果可以看出, 存在样本不平衡现象**。
+
+### 4. 使用原始数据进行预测建模
+
+```{r}
+library(rms)  # 预测模型
+library(ROCR)  # 绘制ROC曲线, PR曲线等
+```
+
+<!-- 划分训练集和测试集: -->
+
+```{r}
+sub_idxs <- sample(1 : nrow(dat), round(nrow(dat) * 2 / 3))
+dat_train <- dat[sub_idxs, ]
+dat_test <- dat[-sub_idxs, ]  # 这个-sub_idxs的用法有意思
+```
+
+```{r}
+predict_probs_and_labels <- function(f, dat) {  # 计算预测概率和标签
+    y_probs_pred <- predict.glm(f, type = "response", newdata = dat)
+    y_labels_pred <- ifelse(y_probs_pred > 0.5, 1, 0)
+    return(list(y_probs_pred, y_labels_pred))
+}
+```
+
+训练逻辑回归模型:
+
+```{r}
+model <- glm(VTE ~ ., data = dat_train, family = binomial(link = "logit"))
+```
+
+计算预测概率和标签:
+
+```{r}
+preds.test <- predict_probs_and_labels(model, dat_test)
+preds.test.probs <- preds.test[1]
+preds.test.labels <- preds.test[2]
+```
+
+计算模型指标并绘制曲线:
+
+```{r}
+trues.test.labels <- dat_test$VTE
+
+pred_obj <- prediction(preds.test.probs, trues.test.labels)  #首先实例化一个评估器对象
+auc <- performance(pred_obj, "auc")@y.values
+aucpr <- performance(pred_obj, "aucpr")@y.values
+
+print(auc[[1]])
+print(aucpr[[1]])
+```
+
+```{r}
+# ROC曲线
+roc <- performance(pred_obj, "tpr", "fpr")
+pr <- performance(pred_obj, "prec", "rec")
+
+library(ggplot2)
+library(ggpubr)
+
+gg_df_roc <- data.frame(c(roc@x.values[[1]]), c(roc@y.values[[1]]))
+colnames(gg_df_roc) <- c("x", "y")
+gg_df_pr <- data.frame(c(pr@x.values[[1]]), c(pr@y.values[[1]]))
+colnames(gg_df_pr) <- c("x", "y")
+
+p1 <- ggplot(gg_df_roc, aes(x =x, y = y)) + geom_line() + theme(plot.margin = margin(2, .8, 0, .8, "cm"))
+p2 <- ggplot(gg_df_pr, aes(x =x, y = y)) + geom_line() + theme(plot.margin = margin(2, .8, 0, .8, "cm"))
+
+ggarrange(p1, p2, labels = c("ROC Curve", "PR Curve"), ncol = 2, nrow = 1)
+```
+
+### 5. 使用重采样数据进行预测建模
+
+```{r}
+library(ROSE)  # 重采样
+```
+
+```{r}
+over <- ovun.sample(
+  VTE ~ .,
+  data = dat_train,
+  method = "over",
+  p=0.5,
+)
+dat_train_rs <- over$data
+```
+
+```{r}
+draw_compar <- function(dat, col) {  # 绘制结局指标正负样本数对比
+  par(pin = c(4, 2), margin(0, 1, 1, 1))
+  barplot(table(dat[, col]), col = rainbow(2))
+}
+
+draw_compar(dat_train_rs, "VTE")
+```
+
+可见，进行重采样后正负样本量相当，此时训练集中的正负样本数为:
+
+```{r}
+table(dat_train_rs[, "VTE"])
+```
+
+训练逻辑回归模型:
+
+```{r}
+model <- glm(VTE ~ ., data = dat_train_rs, family = binomial(link = "logit"))
+```
+
+计算预测概率和标签:
+
+```{r}
+preds_rs.test <- predict_probs_and_labels(model, dat_test)
+preds_rs.test.probs <- preds_rs.test[1]
+preds_rs.test.labels <- preds_rs.test[2]
+```
+
+计算模型指标并绘制曲线:
+
+```{r}
+trues.test.labels <- dat_test$VTE
+
+pred_obj_rs <- prediction(preds_rs.test.probs, trues.test.labels)  #首先实例化一个评估器对象
+auc_rs <- performance(pred_obj_rs, "auc")@y.values
+aucpr_rs <- performance(pred_obj_rs, "aucpr")@y.values
+
+print(auc_rs[[1]])
+print(aucpr_rs[[1]])
+```
+
+```{r}
+# ROC曲线
+roc_rs <- performance(pred_obj_rs, "tpr", "fpr")
+pr_rs <- performance(pred_obj_rs, "prec", "rec")
+
+library(ggplot2)
+library(ggpubr)
+
+gg_df_roc <- data.frame(c(roc_rs@x.values[[1]]), c(roc_rs@y.values[[1]]))
+colnames(gg_df_roc) <- c("x", "y")
+gg_df_pr <- data.frame(c(pr_rs@x.values[[1]]), c(pr_rs@y.values[[1]]))
+colnames(gg_df_pr) <- c("x", "y")
+
+p1 <- ggplot(gg_df_roc, aes(x =x, y = y)) + geom_line() + theme(plot.margin = margin(2, .8, 0, .8, "cm"))
+p2 <- ggplot(gg_df_pr, aes(x =x, y = y)) + geom_line() + theme(plot.margin = margin(2, .8, 0, .8, "cm"))
+
+ggarrange(p1, p2, labels = c("ROC Curve", "PR Curve"), ncol = 2, nrow = 1)
+```
+
+# 重采样前后的ROC和PR曲线对比
+
+ROC变化:
+
+```{r}
+df_roc_compar <- data.frame(
+  c(roc@x.values[[1]]), 
+  c(roc@y.values[[1]]),
+  c(roc_rs@x.values[[1]]), 
+  c(roc_rs@y.values[[1]])
+  )
+colnames(df_roc_compar) <- c("x", "y", "x_rs", "y_rs")
+
+ggplot(data = df_roc_compar) + 
+  geom_line(aes(x = x, y = y)) + 
+  geom_line(aes(x = x_rs, y = y_rs), color = "red") +
+  theme(plot.margin = margin(2, 4, 0, .8, "cm")) +
+  ggtitle("ROC Curve")
+```
+
+PR变化:
+
+```{r}
+df_pr_compar <- data.frame(
+  c(pr@x.values[[1]]), 
+  c(pr@y.values[[1]]),
+  c(pr_rs@x.values[[1]]), 
+  c(pr_rs@y.values[[1]])
+  )
+colnames(df_pr_compar) <- c("x", "y", "x_rs", "y_rs")
+
+ggplot(data = df_pr_compar) + 
+  geom_line(aes(x = x, y = y)) + 
+  geom_line(aes(x = x_rs, y = y_rs), color = "red") +
+  theme(plot.margin = margin(2, 4, 0, .8, "cm")) +
+  ggtitle("PR Curve")
+```
